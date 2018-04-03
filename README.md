@@ -64,6 +64,5 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 * Code based on matlab routines originally developed with Ely Kovetz
 * Thanks to Dongwoo Chung and George Stein for debugging help
-* etc
 
 
