@@ -1,6 +1,6 @@
 # lim
 
-lim is a python application designed to analytically compute various statistics of line intensity maps using a wide variety of models.  
+lim is a python application designed to analytically compute various statistics of line intensity maps using a wide variety of models.  This code is a work in progress, so it may change significantly and there may be undetected bugs.
 
 ### Prerequisites
 
@@ -12,67 +12,49 @@ pip install hmf
 
 Finally, lim uses the hmf matter power spectrum, which uses the python camb wrapper if available, and the Eisenstein-Hu transfer function if not.
 
-### Installing
+### Quickstart
 
-A step by step series of examples that tell you have to get a development env running
-
-Say what the step will be
+In the folder containing the lim functions, you can quickly get the default CO power spectrum by running in an interpreter
 
 ```
-Give the example
+from lim import LineModel
+m = LineModel()
+m.Pk
 ```
 
-And repeat
+All parameters have default values, which can be changed either when creating the model or using the built-in update() method.  For example, to change the observing frequency from the default you could either run
 
 ```
-until finished
+m = LineModel(nuObs=15*u.GHz)
+m.z
 ```
 
-End with an example of getting some data out of the system or using it for a little demo
-
-## Running the tests
-
-Explain how to run the automated tests for this system
-
-### Break down into end to end tests
-
-Explain what these tests test and why
+or
 
 ```
-Give an example
+m = LineModel()
+m.update(nuObs=15*u.GHz)
+m.z
 ```
 
-### And coding style tests
+## DocTests
 
-Explain what these tests test and why
+To quickly check several of the parameters, lim includes doctests.  In a terminal, simply run
 
 ```
-Give an example
+python lim.py
 ```
 
-## Deployment
+Note that the expected power spectra for the doctests were computed assuming the camb module is installed.  If you do not have camb installed, i.e. if
 
-Add additional notes about how to deploy this on a live system
-
-## Built With
-
-* [Dropwizard](http://www.dropwizard.io/1.0.2/docs/) - The web framework used
-* [Maven](https://maven.apache.org/) - Dependency Management
-* [ROME](https://rometools.github.io/rome/) - Used to generate RSS Feeds
-
-## Contributing
-
-Please read [CONTRIBUTING.md](https://gist.github.com/PurpleBooth/b24679402957c63ec426) for details on our code of conduct, and the process for submitting pull requests to us.
-
-## Versioning
-
-We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/your/project/tags). 
+```
+import camb
+```
+gives an error, hmf will use the EH transfer function and the doctest on Pk will give incorrect numbers
 
 ## Authors
 
-* **Billie Thompson** - *Initial work* - [PurpleBooth](https://github.com/PurpleBooth)
-
-See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
+* **Patrick C. Breysse**
 
 ## License
 
@@ -80,8 +62,8 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 ## Acknowledgments
 
-* Hat tip to anyone who's code was used
-* Inspiration
+* Code based on matlab routines originally developed with Ely Kovetz
+* Thanks to Dongwoo Chung and George Stein for debugging help
 * etc
 
 
