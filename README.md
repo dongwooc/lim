@@ -62,7 +62,7 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 ## Acknowledgments
 
-* Code based on matlab routines originally developed with Ely Kovetz
+* Code based on matlab routines originally developed with Ely Kovetz and python routines originally developed with Eric Switzer
 * Thanks to Dongwoo Chung and George Stein for debugging help
 
 
