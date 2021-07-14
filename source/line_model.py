@@ -11,8 +11,11 @@ from scipy.interpolate import interp1d
 from scipy.special import sici
 from scipy.special import legendre
 from scipy.special import erf
+from scipy.special import dawsn
 from scipy.stats import poisson
 from scipy.fft import fft,ifft
+
+dawsn_over_x_non_divergent = lambda x:np.where(x!=0,dawsn(x)/x,1)
 
 try:
     import camb
@@ -154,6 +157,9 @@ class LineModel(object):
                     Line widths are not folded into the VID at present.
                     (default = None)
                     (example: lambda M:50*u.km/u.s*(M/1e10/u.Msun)**(1/3.) )
+
+    line_incli:     Bool, if accounting for randomly inclined line profiles.
+                    (default = True)
     
     sigma_NL:       Scale of Nonlinearities (Default: 7 Mpc)
     
@@ -223,6 +229,7 @@ class LineModel(object):
                  do_Jysr=False,
                  do_RSD=True,
                  v_of_M=None,
+                 line_incli=True,
                  sigma_NL=7*u.Mpc,
                  nmu=1000,
                  FoG_damp='Lorentzian',
@@ -1061,12 +1068,33 @@ class LineModel(object):
     def Wline(self):
         '''
         Fourier-space factor for Gaussian line profile, in k-mu-M grid.
+        Applicable for shot noise power spectrum.
         Calculated from class attributes including v_of_M provided at init.
         '''
         if self.v_of_M is not None:
             vvec = self.v_of_M(self.M).to(u.km/u.s)
             sigma_v_of_M = ((1+self.z)/self.H*vvec/2.35482).to(u.Mpc)
-            return np.exp(-(self.k_par[...,None]*sigma_v_of_M[None,None,:])**2/2)
+            if self.line_incli:
+                return dawsn_over_x_non_divergent(2/3**0.5*self.k_par[...,None]*sigma_v_of_M[None,None,:])
+            else:
+                return np.exp(-(self.k_par[...,None]*sigma_v_of_M[None,None,:])**2)
+        else:
+            return np.ones(self.Pm.shape+self.M.shape)
+
+    @cached_property
+    def Wline_clust(self):
+        '''
+        Fourier-space factor for Gaussian line profile, in k-mu-M grid.
+        Just sqrt(Wline) for line_incli==False, but subtly different otherwise.
+        Calculated from class attributes including v_of_M provided at init.
+        '''
+        if self.v_of_M is not None:
+            if self.line_incli:
+                vvec = self.v_of_M(self.M).to(u.km/u.s)
+                sigma_v_of_M = ((1+self.z)/self.H*vvec/2.35482).to(u.Mpc)
+                return dawsn_over_x_non_divergent((2/3)**0.5*self.k_par[...,None]*sigma_v_of_M[None,None,:])
+            else:
+                return self.Wline**0.5
         else:
             return np.ones(self.Pm.shape+self.M.shape)
         
@@ -1151,7 +1179,7 @@ class LineModel(object):
             return self.model_par['Pshot']
         elif self.v_of_M is not None:
             if self.model_type == 'ML':
-                itgrnd = (self.LofM**2*self.dndM)[None,None,:]*self.Wline**2
+                itgrnd = (self.LofM**2*self.dndM)[None,None,:]*self.Wline
                 L2bar = np.trapz(itgrnd,self.M)*self.fduty
                 # Add L vs. M scatter
                 L2bar = L2bar*np.exp(self.sigma_scatter**2*np.log(10)**2)
@@ -1193,7 +1221,7 @@ class LineModel(object):
                                     *sig_SFR**2*np.log(10)**2/2.)
         elif self.v_of_M is not None:
             if self.model_type == 'ML':
-                itgrnd = (self.LofM*self.dndM)[None,None,:]*self.Wline
+                itgrnd = (self.LofM*self.dndM)[None,None,:]*self.Wline_clust
                 itgrnd*= self.bofM.T[None,:,:]
                 wt = self.CLT*np.trapz(itgrnd,self.M)*self.fduty
                 # Special case for Tony Li model- scatter does not preserve LCO
