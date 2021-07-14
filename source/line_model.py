@@ -111,7 +111,7 @@ class LineModel(object):
                     parameter, but necessary to define high-mass cutoffs for
                     mass function integrals (Default = 10^15 Msun)
                     
-    nM:             Number of halo mass points (Default = 5000)
+    nM:             Number of halo mass points (Default = 500)
     
     Lmin:           Minimum luminosity for luminosity function calculations
                     (Default = 100 Lsun)
@@ -147,6 +147,13 @@ class LineModel(object):
                     than brightness temperature (Default = False)
                     
     do_RSD:         Bool, if True power spectrum includes RSD (Default:False)
+
+    v_of_M:         Function returning the unitful FWHM of the line profile of
+                    emission given halo mass.
+                    Line widths are not applied if v_of_M is None.
+                    Line widths are not folded into the VID at present.
+                    (default = None)
+                    (example: lambda M:50*u.km/u.s*(M/1e10/u.Msun)**(1/3.) )
     
     sigma_NL:       Scale of Nonlinearities (Default: 7 Mpc)
     
@@ -202,7 +209,7 @@ class LineModel(object):
                  nuObs=30*u.GHz,
                  Mmin=1e9*u.Msun,
                  Mmax=1e15*u.Msun,
-                 nM=5000,
+                 nM=500,
                  Lmin=10*u.Lsun,
                  Lmax=1e8*u.Lsun,
                  nL=5000,
@@ -215,6 +222,7 @@ class LineModel(object):
                  do_onehalo=False,
                  do_Jysr=False,
                  do_RSD=True,
+                 v_of_M=None,
                  sigma_NL=7*u.Mpc,
                  nmu=1000,
                  FoG_damp='Lorentzian',
@@ -778,7 +786,6 @@ class LineModel(object):
         
         return mf.to(u.Mpc**-3*u.Msun**-1)
         
-        
     @cached_property
     def sigmaM(self):
         '''
@@ -1051,6 +1058,19 @@ class LineModel(object):
 
         
     @cached_property
+    def Wline(self):
+        '''
+        Fourier-space factor for Gaussian line profile, in k-mu-M grid.
+        Calculated from class attributes including v_of_M provided at init.
+        '''
+        if self.v_of_M is not None:
+            vvec = self.v_of_M(self.M).to(u.km/u.s)
+            sigma_v_of_M = ((1+self.z)/self.H*vvec/2.35482).to(u.Mpc)
+            return np.exp(-(self.k_par[...,None]*sigma_v_of_M[None,None,:])**2/2)
+        else:
+            return np.ones(self.Pm.shape+self.M.shape)
+        
+    @cached_property
     def Pm(self):
         '''
         Matter power spectrum from the interpolator computed by camb. 
@@ -1129,6 +1149,22 @@ class LineModel(object):
         
         if self.model_type == 'TOY':
             return self.model_par['Pshot']
+        elif self.v_of_M is not None:
+            if self.model_type == 'ML':
+                itgrnd = (self.LofM**2*self.dndM)[None,None,:]*self.Wline**2
+                L2bar = np.trapz(itgrnd,self.M)*self.fduty
+                # Add L vs. M scatter
+                L2bar = L2bar*np.exp(self.sigma_scatter**2*np.log(10)**2)
+                # Special case for Tony Li model- scatter does not preserve LCO
+                if self.model_name=='TonyLi':
+                    alpha = self.model_par['alpha']
+                    sig_SFR = self.model_par['sig_SFR']
+                    L2bar = L2bar*np.exp((2.*alpha**-2-alpha**-1)
+                                        *sig_SFR**2*np.log(10)**2)
+            else:
+                print("Line width modelling only available for ML models")
+                L2bar = 1.*self.L2mean
+            return self.CLT**2*L2bar
         else:
             return self.CLT**2*self.L2mean
         
@@ -1144,6 +1180,8 @@ class LineModel(object):
                 print("One halo term only available for ML models")
                 wt = self.Tmean*self.bavg
             else:
+                if self.v_of_M is not None:
+                    print("Line widths not available w/ do_onehalo at present")
                 Mass_Dep = self.LofM*self.dndM
                 itgrnd = np.tile(Mass_Dep,(self.k.size,1)).T*self.ft_NFW*self.bofM
                 wt = self.CLT*np.trapz(itgrnd,self.M,axis=0)*self.fduty
@@ -1153,6 +1191,20 @@ class LineModel(object):
                     sig_SFR = self.model_par['sig_SFR']
                     wt = wt*np.exp((alpha**-2-alpha**-1)
                                     *sig_SFR**2*np.log(10)**2/2.)
+        elif self.v_of_M is not None:
+            if self.model_type == 'ML':
+                itgrnd = (self.LofM*self.dndM)[None,None,:]*self.Wline
+                itgrnd*= self.bofM.T[None,:,:]
+                wt = self.CLT*np.trapz(itgrnd,self.M)*self.fduty
+                # Special case for Tony Li model- scatter does not preserve LCO
+                if self.model_name=='TonyLi':
+                    alpha = self.model_par['alpha']
+                    sig_SFR = self.model_par['sig_SFR']
+                    wt*= np.exp((alpha**-2-alpha**-1)
+                                        *sig_SFR**2*np.log(10)**2/2.)
+            else:
+                print("Line width modelling only available for ML models")
+                wt = self.Tmean*self.bavg
         else:
             wt = self.Tmean*self.bavg
         

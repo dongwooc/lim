@@ -157,6 +157,9 @@ def check_params(input_params, default_params):
             if key=='scatter_seed':
                 if type(input_value)==int or type(input_value)==float:
                     pass
+            if key=='v_of_M':
+                if callable(input_value):
+                    pass # default is NoneType but can be lambda
                 
             elif type(default_value)==Quantity:
                 raise TypeError("Parameter "+key+
