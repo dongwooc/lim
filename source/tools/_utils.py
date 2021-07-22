@@ -265,6 +265,19 @@ def log_interp1d(xx, yy, kind='linear',bounds_error=False,fill_value='extrapolat
 
     return log_interp
 
+def semilogx_interp1d(xx, yy, kind='linear',bounds_error=False,fill_value='extrapolate'):
+   '''
+   log-linear interpolation
+   '''
+   try:
+       logx = np.log10(xx.value)
+   except:
+       logx = np.log10(xx)
+   lin_interp = interp1d(logx, yy, kind=kind,bounds_error=bounds_error,fill_value=fill_value)
+
+   log_interp = lambda zz: lin_interp(np.log10(zz))
+   return log_interp
+
 def save_in_file(name, lis):
     '''
     Save the list (i.e. [k, Pk, sk]) in a file with path 'name'
@@ -317,3 +330,28 @@ def lognormal(x,mu,sigma):
         return 1/x/sigma/(2.*np.pi)**0.5*np.exp(-(np.log(x.value) - mu)**2/2./sigma**2)
     except:
         return 1/x/sigma/(2.*np.pi)**0.5*np.exp(-(np.log(x) - mu)**2/2./sigma**2)
+
+def Olin_res(r0,r1,dire):
+   '''
+   Returns the sqrt(sum(res)) of Olin-1 at low k
+   '''
+   import mcfit
+   #unpack dictionary
+   iCF = dire['iCF']
+   iPk = dire['iPk']
+   rvec = dire['rvec']
+   kdum = dire['kdum']
+
+   #remove the peak
+   ind=np.concatenate((np.where(rvec<=r0)[0],np.where(rvec>=r1)[0]))
+   CF_nw = semilogx_interp1d(rvec[ind],rvec[ind]**2*iCF(rvec[ind]),
+                          kind='cubic',fill_value='extrapolate',bounds_error=False)(rvec)/(rvec**2)
+   iCF_nw = semilogx_interp1d(rvec,CF_nw,
+                              kind='cubic',fill_value='extrapolate',bounds_error=False)
+   #Undo the FT to get the unwiggled Pk
+   ift = mcfit.xi2P(rvec, l=0, lowring=True)
+   kkvec, Pk_nw = ift(CF_nw, extrap=True)
+   iPk_nw = semilogx_interp1d(kkvec,Pk_nw,kind='cubic',fill_value='extrapolate',bounds_error=False)
+   iOlin = semilogx_interp1d(kkvec,iPk(kkvec)/iPk_nw(kkvec),kind='cubic',fill_value='extrapolate',bounds_error=False)
+
+   return np.sqrt(np.sum((iOlin(kdum)-1)**2))

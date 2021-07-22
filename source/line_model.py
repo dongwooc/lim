@@ -32,8 +32,8 @@ if NoCamb and NoClass:
 
 
 from source.tools._utils import cached_property,cached_cosmo_property,cached_vid_property,get_default_params,check_params
-from source.tools._utils import check_model,check_bias_model,check_halo_mass_function_model
-from source.tools._utils import log_interp1d,ulogspace,ulinspace,check_invalid_params,merge_dicts,lognormal
+from source.tools._utils import check_model,check_bias_model,check_halo_mass_function_model,Olin_res
+from source.tools._utils import log_interp1d,semilogx_interp1d,ulogspace,ulinspace,check_invalid_params,merge_dicts,lognormal
 import source.tools._vid_tools as vt
 import source.luminosity_functions as lf
 import source.mass_luminosity as ml
@@ -170,6 +170,9 @@ class LineModel(object):
     smooth:         smoothed power spectrum, convoluted with beam/channel
                     (Default: False)
     
+    BAO_suppress:   includes calculation of BAO suppression effect. mcfit req'd
+                    (Default: False)
+    
     DOCTESTS:
     >>> m = LineModel()
     >>> m.hubble
@@ -234,6 +237,7 @@ class LineModel(object):
                  nmu=1000,
                  FoG_damp='Lorentzian',
                  smooth=False,
+                 BAO_suppress=False,
                  nonlinear=False,
                  #VID params
                  Tmin_VID=1.0e-2*u.uK,
@@ -1103,7 +1107,26 @@ class LineModel(object):
         '''
         Matter power spectrum from the interpolator computed by camb. 
         '''
-        if self.cosmo_code == 'camb':
+        if self.BAO_suppress:
+            # code from JLB
+            #Compute the BAO supression scales:
+            ind_mid_k = int(self.nk/2)
+            ind_mid_mu = int(self.nmu/2)
+
+            Dz = self.Dgrowth(self.z)
+            s8 = self.cosmo.get_sigma8()[-1]
+            fz = self.f_eff[ind_mid_mu,ind_mid_k]
+            Sperp = 10.4*Dz*s8
+            Spar = 10.4*Dz*s8*(1+fz)
+
+            iPk_nw_fid, iOlin_fid = self.separate_BAO(r1bounds=[240,280])
+
+            kk = self.ki_grid.to(self.Mpch**-1).value
+            Pk_nw_fid = iPk_nw_fid(kk)
+            Olin_fid = iOlin_fid(kk)
+            NL_BAO=np.exp(-0.5*(kk**2*self.mui_grid**2*Spar**2+kk**2*(1.-self.mui_grid**2)*Sperp**2))
+            return (Pk_nw_fid*(1.+(Olin_fid-1.)*NL_BAO)*self.Mpch**3).to(u.Mpc**3)
+        elif self.cosmo_code == 'camb':
             return self.PKint(self.z,self.ki_grid.value)*u.Mpc**3
         else:
             Pkvec = self.PKint(self.k.value,np.array([self.z]),self.nk,1,0)*u.Mpc**3
@@ -1776,6 +1799,90 @@ class LineModel(object):
         for key in new_params:
             setattr(self, key, new_params[key])
                  
+    #####################################################
+    # Method for calculating no-wiggle power spectrum   #
+    # and isolated BAO feature separately (via JLB)     #
+    #####################################################
+    def separate_BAO(self,r0bounds=None,r1bounds=None):
+        '''
+        Isolates the BAO feature and return P_smooth and O_lin
+        
+        Varies r0bounds and r1bounds to find the better convergence at low k between
+        of Olin -> 1 as k->0
+        '''
+        import mcfit
+        Nk=4096
+        khmin = 1.1e-5
+        khmax = 20.
+        factor=0.01
+        
+        kh = (np.logspace(np.log10(khmin),np.log10(khmax),Nk)*self.Mpch**-1).to(self.Mpch**-1)
+        Pkh = (self.PKint(self.z,kh.to(u.Mpc**-1).value)*u.Mpc**3).to(self.Mpch**3)
+        iPk = log_interp1d(kh.value,Pkh.value,kind='cubic',fill_value='extrapolate',bounds_error=False)
+                                   
+        #Fourier Transform to get it to CF
+        ft = mcfit.P2xi(kh.value, l=0, lowring=True)
+        rvec, CF = ft(Pkh.value, extrap=True)
+        iCF = semilogx_interp1d(rvec,CF,kind='cubic',bounds_error=False,fill_value='extrapolate')
+        
+        #Prepare the iteration (choosing the interval to remove peak in 2PCF)
+        kdum = np.logspace(-4,-3,1000)
+        dire = dict(iCF=iCF,iPk=iPk,rvec=rvec,kdum=kdum)
+        
+        #Consider many r0
+        if r0bounds is None:
+            r0_vec = np.linspace(60,69,40)
+        else:
+            r0_vec = np.linspace(r0bounds[0],r0bounds[1],40)
+            
+        #residual vector
+        res = np.zeros(len(r0_vec))
+        r1 = np.zeros(len(r0_vec))
+        if r1bounds is None:
+            r1b_1,r1b_2 = 200,300
+        else:
+            r1b_1,r1b_2 = r1bounds[0],r1bounds[1]
+        for i in range(len(r0_vec)):
+            r1_1 = r1b_1
+            r1_2 = r1b_2
+            #Bisection to find best r1 for each r0
+            for j in range(150):
+                #find residual for each case
+                res1 = Olin_res(r0_vec[i],r1_1,dire)
+                res2 = Olin_res(r0_vec[i],r1_2,dire)
+                
+                dr = (r1_2-r1_1)
+                if res1 > res2:
+                    r1_1 = r1_1 + 0.5*dr
+                    res[i] = res2
+
+                elif res2 > res1:
+                    r1_2 = r1_2 - 0.5*dr
+                    res[i] = res1
+
+                else:
+                    res[i] = res1
+                    break
+            r1[i] = 0.5*(r1_1+r1_2)
+        
+        #choose the r0 and r1 values with minimum residual
+        indr = np.argmin(res)
+        r0,r1 = r0_vec[indr],r1[indr]
+
+        #Remove the peak of the correlation function
+        ind=np.concatenate((np.where(rvec<=r0)[0],np.where(rvec>=r1)[0]))
+        
+        CF_nw = semilogx_interp1d(rvec[ind],rvec[ind]**2*iCF(rvec[ind]),
+                                   kind='cubic',fill_value='extrapolate',bounds_error=False)(rvec)/(rvec**2)
+        
+        #Undo the FT to get the unwiggled Pk
+        ift = mcfit.xi2P(rvec, l=0, lowring=True)
+        kkvec, Pk_nw = ift(CF_nw, extrap=True)
+        iPk_nw = semilogx_interp1d(kkvec,Pk_nw,kind='cubic',fill_value='extrapolate',bounds_error=False)
+        
+        iOlin = semilogx_interp1d(kkvec,iPk(kkvec)/iPk_nw(kkvec),kind='cubic',fill_value='extrapolate',bounds_error=False)
+        #return iPkh, iPkh_nw, iCFh, iCFh_nw
+        return iPk_nw, iOlin
             
     #####################################################
     # Method for resetting to original input parameters #
